@@ -159,6 +159,9 @@ export default {
         if (existing && existing.status !== "cancelled") {
           return err("ALREADY_LISTED", `origin ${draft.origin} is already listed (${existing.status})`);
         }
+        // Re-listing after cancel: the origin is the primary key, so the
+        // stale row must go before the fresh insert (otherwise D1 throws).
+        if (existing) await store.remove(draft.origin);
         const listing: Listing = {
           ...draft, status: "active",
           buyTxid: null, buyerHandle: null, transferTxid: null,

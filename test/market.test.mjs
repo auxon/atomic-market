@@ -320,3 +320,45 @@ test("toChainTx converts WhatsOnChain BSV values to sats", async () => {
   assert.equal(toChainTx(null, "t"), null);
   assert.equal(toChainTx({ vin: [], vout: "nope" }, "t"), null);
 });
+
+test("re-list after cancel replaces the row (PK reuse)", async () => {
+  const s = memoryStore();
+  const now = Date.now();
+  await s.insert({ ...listing(), createdAt: now, updatedAt: now });
+  assert.equal(await s.setStatus(`${TX}.0`, "cancelled", {}), true);
+  // handler path: cancelled -> remove -> insert fresh terms
+  const cur = await s.get(`${TX}.0`);
+  assert.equal(cur.status, "cancelled");
+  await s.remove(`${TX}.0`);
+  assert.equal(await s.get(`${TX}.0`), null);
+  await s.insert({ ...listing({ priceSats: 9000 }), createdAt: now + 1, updatedAt: now + 1 });
+  const fresh = await s.get(`${TX}.0`);
+  assert.equal(fresh.status, "active");
+  assert.equal(fresh.priceSats, 9000);
+  assert.equal((await s.listActive()).length, 1);
+  // remove is safe on unknown origins
+  assert.equal(await s.remove(`${TX2}.9`), false);
+});
+
+test("d1Store remove binds the origin", async () => {
+  const calls = [];
+  const db = {
+    prepare: (q) => {
+      calls.push(q);
+      return {
+        bind: (...args) => {
+          calls.push(args);
+          return {
+            all: async () => ({ results: [] }),
+            first: async () => null,
+            run: async () => ({ meta: { changes: 1 } }),
+          };
+        },
+      };
+    },
+  };
+  const s = d1Store(db);
+  assert.equal(await s.remove(`${TX}.0`), true);
+  assert.match(calls[0], /DELETE FROM listings WHERE origin = \?/);
+  assert.deepEqual(calls[1], [`${TX}.0`]);
+});

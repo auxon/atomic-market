@@ -10,6 +10,8 @@ export interface ListingStore {
   listRecent(limit: number): Promise<Listing[]>;
   insert(listing: Listing): Promise<void>;
   setStatus(origin: string, status: ListingStatus, patch: Partial<Pick<Listing, "buyTxid" | "buyerHandle" | "transferTxid">>): Promise<boolean>;
+  /** Drop a row entirely — used to re-list a cancelled origin (PK reuse). */
+  remove(origin: string): Promise<boolean>;
 }
 
 const COLS = [
@@ -102,6 +104,12 @@ export function d1Store(db: {
       ).run();
       return true;
     },
+    remove: async (origin) => {
+      const res = (await db.prepare(`DELETE FROM listings WHERE origin = ?`).bind(origin).run()) as
+        | { meta?: { changes?: number } }
+        | undefined;
+      return Number(res?.meta?.changes ?? 0) > 0;
+    },
   };
 }
 
@@ -126,5 +134,6 @@ export function memoryStore(): ListingStore & { rows: Map<string, Listing> } {
       rows.set(origin, { ...cur, status, ...patch, updatedAt: Date.now() });
       return true;
     },
+    remove: async (origin) => rows.delete(origin),
   };
 }
