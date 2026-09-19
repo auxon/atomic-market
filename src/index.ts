@@ -30,12 +30,18 @@ function json(data: unknown, status = 200): Response {
  * Base-path strip: the worker serves /v1/* on workers.dev and
  * /atomic-market/v1/* on entangleit.com (Worker route). Pure — tested.
  */
+export const MOUNT = "/atomic-market";
+
 export function routePath(pathname: string): string {
-  const prefix = "/atomic-market";
-  if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
-    return pathname.slice(prefix.length) || "/";
+  if (pathname === MOUNT || pathname.startsWith(`${MOUNT}/`)) {
+    return pathname.slice(MOUNT.length) || "/";
   }
   return pathname;
+}
+
+/** Canonical trailing slash: the bare mount path 308s to `${MOUNT}/`. */
+export function mountRedirect(pathname: string): string | null {
+  return pathname === MOUNT ? `${MOUNT}/` : null;
 }
 
 function err(code: string, message: string): Response {
@@ -76,6 +82,13 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const url = new URL(req.url);
+    const redirect = mountRedirect(url.pathname);
+    if (redirect) {
+      return new Response(null, {
+        status: 308,
+        headers: { ...CORS, location: `${redirect}${url.search}` },
+      });
+    }
     const store = d1Store(env.DB);
     const path = routePath(url.pathname);
     const base = (env.WOC_BASE ?? "https://api.whatsonchain.com/v1/bsv/main").replace(/\/$/, "");
@@ -168,6 +181,25 @@ export default {
         return json({ ok: true });
       }
       if (req.method === "GET" && path === "/health") return json({ ok: true });
+      // Mounted root: a landing, not an error — the redirect target and
+      // the workers.dev root both land here.
+      if (req.method === "GET" && path === "/") {
+        return json({
+          name: "atomic-market",
+          ok: true,
+          docs: "https://github.com/auxon/atomic-market",
+          endpoints: {
+            listings: "GET /v1/market[?kind=ordinal|bsv21]",
+            recent: "GET /v1/market/recent[?limit=]",
+            listing: "GET /v1/market/listing/:origin",
+            list: "POST /v1/market/list",
+            buy: "POST /v1/market/buy",
+            settle: "POST /v1/market/settle",
+            cancel: "POST /v1/market/cancel",
+            health: "GET /health",
+          },
+        });
+      }
       return err("NOT_FOUND", "unknown route");
     } catch (e) {
       const code = (e as { code?: unknown }).code;

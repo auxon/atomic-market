@@ -4,7 +4,8 @@ Generic order-book worker for atomic swaps. No custody, no escrow — the
 chain settles, this worker only matches listings and verifies payments.
 
 Live at **https://entangleit.com/atomic-market** (Worker route on the
-EntangleIT zone; `atomic-market.richard-hein.workers.dev` still serves the
+EntangleIT zone; the bare path 308s to `/atomic-market/`, which serves a
+JSON landing; `atomic-market.richard-hein.workers.dev` still serves the
 same worker at the root for direct API use).
 
 PocketPets keeps pointing at the legacy worker; this one serves new

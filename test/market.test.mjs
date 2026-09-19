@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { feeSats, isP2PKH, parseOutpoint, validateListing } from "../src/validate.ts";
 import { transferJsonHex, verifyBuy, verifyListParent, verifySettle } from "../src/verify.ts";
 import { routePath } from "../src/index.ts";
+import { mountRedirect } from "../src/index.ts";
 import { d1Store, memoryStore } from "../src/store.ts";
 
 const P2PKH_A = `76a914${"11".repeat(20)}88ac`;
@@ -258,4 +259,12 @@ test("routePath strips the /atomic-market base path", () => {
   assert.equal(routePath("/atomic-market/v1/market"), "/v1/market");
   assert.equal(routePath("/atomic-market/v1/market/listing/abc.0"), "/v1/market/listing/abc.0");
   assert.equal(routePath("/atomic-marketx/v1"), "/atomic-marketx/v1");
+});
+
+test("mountRedirect canonicalizes the bare mount path", () => {
+  assert.equal(mountRedirect("/atomic-market"), "/atomic-market/");
+  assert.equal(mountRedirect("/atomic-market/"), null);
+  assert.equal(mountRedirect("/atomic-market/v1/market"), null);
+  assert.equal(mountRedirect("/atomic-marketx"), null);
+  assert.equal(mountRedirect("/"), null);
 });
