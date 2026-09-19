@@ -46,17 +46,22 @@ test("P2PKH recognition", () => {
   assert.equal(isP2PKH("76a91488ac"), false);
 });
 
-test("validateListing accepts atomic ordinal listings", () => {
-  const l = validateListing({
+test("validateListing blocks v2 atomic offers (not indexer-safe)", () => {
+  const atomic = {
     origin: `${TX}.0`, assetKind: "ordinal", title: "Concert ticket",
     priceSats: 5000, seller: "1Seller", sellerUnlock: "ab".repeat(50), payScript: P2PKH_A,
     feeBps: 200, feeAddress: "1Fee",
+  };
+  assert.throws(() => validateListing(atomic), /v2 atomic offers are not indexer-safe/);
+  // direct sales still pass (no offer fields)
+  const direct = validateListing({
+    origin: `${TX}.0`, assetKind: "ordinal", title: "Concert ticket",
+    priceSats: 5000, seller: "1Seller", feeBps: 200, feeAddress: "1Fee",
     metadata: { section: "A" },
   });
-  assert.equal(l.origin, `${TX}.0`);
-  assert.equal(l.assetKind, "ordinal");
-  assert.equal(l.tokenId, null);
-  assert.deepEqual(l.metadata, { section: "A" });
+  assert.equal(direct.origin, `${TX}.0`);
+  assert.equal(direct.tokenId, null);
+  assert.deepEqual(direct.metadata, { section: "A" });
 });
 
 test("validateListing accepts direct sales and bsv21", () => {
@@ -79,14 +84,13 @@ test("validateListing accepts direct sales and bsv21", () => {
 test("validateListing rejects bad shapes", () => {
   const good = {
     origin: `${TX}.0`, title: "T", priceSats: 100, seller: "1S",
-    sellerUnlock: "ab", payScript: P2PKH_A, feeAddress: "1F",
+    feeAddress: "1F",
   };
   assert.throws(() => validateListing(null), /object/);
   assert.throws(() => validateListing({ ...good, origin: "nope" }), /origin/);
   assert.throws(() => validateListing({ ...good, priceSats: 0 }), /priceSats/);
-  assert.throws(() => validateListing({ ...good, payScript: undefined }), /both sellerUnlock and payScript/);
-  assert.throws(() => validateListing({ ...good, sellerUnlock: undefined }), /both sellerUnlock and payScript/);
-  assert.throws(() => validateListing({ ...good, payScript: "00" }), /P2PKH/);
+  assert.throws(() => validateListing({ ...good, payScript: P2PKH_A }), /both sellerUnlock and payScript/);
+  assert.throws(() => validateListing({ ...good, sellerUnlock: "ab" }), /both sellerUnlock and payScript/);
   assert.throws(() => validateListing({ ...good, feeBps: 10001 }), /feeBps/);
   assert.throws(() => validateListing({ ...good, assetKind: "doge" }), /assetKind/);
   assert.throws(() => validateListing({ ...good, assetKind: "bsv21" }), /tokenId/);

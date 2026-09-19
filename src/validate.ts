@@ -76,6 +76,16 @@ export function validateListing(body: NewListing): Omit<Listing,
   if ((sellerUnlock === null) !== (payScript === null)) {
     fail("BAD_PARAM", "atomic offers need both sellerUnlock and payScript; direct sales need neither");
   }
+  // v2 (single-input) offers are not indexer-safe: the 1Sat indexer assigns
+  // the inscribed sat to the FIRST output (FIFO), which v2 makes the seller
+  // payment — so a buyer would pay and receive nothing. Blocked until the
+  // dual-input v4 offer ships.
+  if (sellerUnlock !== null) {
+    fail(
+      "BAD_PARAM",
+      "v2 atomic offers are not indexer-safe (the inscribed sat lands on the payment output); re-list with a v4 offer",
+    );
+  }
   let tokenId: string | null = null;
   let tokenAmount: string | null = null;
   if (assetKind === "bsv21") {
