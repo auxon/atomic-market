@@ -8,6 +8,20 @@ EntangleIT zone; the bare path 308s to `/atomic-market/`, which serves a
 JSON landing; `atomic-market.richard-hein.workers.dev` still serves the
 same worker at the root for direct API use).
 
+The **BRC-100 app** lives at **https://market.entangleit.com** (custom
+domain): same worker serves `public/` (UI + `/manifest.json`) on that host
+and the API same-origin. Install and run it as a bsvOS app:
+
+```bash
+bsv app install market.entangleit.com
+bsv allow market.entangleit.com 100000000   # first-run approval (cap)
+bsv app open market.entangleit.com          # sandboxed runner + window.bsv
+```
+
+Wallet actions go through the capability-scoped `window.bsv` bridge
+(origin-policed); reads (listings, ORDFS metadata) are plain HTTPS. Edit
+the UI in `public/`, then `npm run build:ui` to inline it for deploy.
+
 PocketPets keeps pointing at the legacy worker; this one serves new
 markets (tickets, art, game items, Twetch NFTs) with per-market fees.
 

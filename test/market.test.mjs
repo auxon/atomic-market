@@ -268,3 +268,36 @@ test("mountRedirect canonicalizes the bare mount path", () => {
   assert.equal(mountRedirect("/atomic-marketx"), null);
   assert.equal(mountRedirect("/"), null);
 });
+
+test("market host serves the BRC-100 app UI", async () => {
+  const { isMarketHost, uiAsset } = await import("../src/index.ts");
+  assert.equal(isMarketHost("market.entangleit.com"), true);
+  assert.equal(isMarketHost("MARKET.ENTANGLEIT.COM"), true);
+  assert.equal(isMarketHost("entangleit.com"), false);
+  assert.equal(isMarketHost("atomic-market.richard-hein.workers.dev"), false);
+  const index = uiAsset("/");
+  assert.ok(index && index.type.startsWith("text/html"));
+  assert.ok(index.body.includes("Atomic Market"));
+  const manifest = uiAsset("/manifest.json");
+  assert.ok(manifest && manifest.type === "application/json");
+  const parsed = JSON.parse(manifest.body);
+  assert.equal(parsed.name, "Atomic Market");
+  assert.equal(parsed.start_url, "/");
+  assert.ok(parsed.metanet.groupPermissions.spendingAuthorization.amount > 0);
+  assert.deepEqual(parsed.metanet.intents.map((i) => i.action), ["app-swap", "app-spend", "app-swap-offer"]);
+  assert.ok(uiAsset("/app.js").body.includes("window.bsv"));
+  assert.ok(uiAsset("/styles.css").type.startsWith("text/css"));
+  assert.equal(uiAsset("/nope"), null);
+});
+
+test("generated UI matches public/ sources byte-for-byte", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const { UI_ASSETS } = await import("../src/ui.generated.ts");
+  const dir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../public");
+  const files = fs.readdirSync(dir).filter((f) => !f.startsWith(".")).sort();
+  assert.deepEqual(Object.keys(UI_ASSETS).sort(), files.map((f) => `/${f}`).sort());
+  for (const f of files) {
+    assert.equal(UI_ASSETS[`/${f}`].body, fs.readFileSync(path.join(dir, f), "utf8"), `${f} stale — run npm run build:ui`);
+  }
+});

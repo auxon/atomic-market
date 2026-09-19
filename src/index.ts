@@ -7,6 +7,7 @@
  */
 import { d1Store } from "./store.ts";
 import type { Listing } from "./types.ts";
+import { UI_ASSETS } from "./ui.generated.ts";
 import { validateListing } from "./validate.ts";
 import { verifyBuy, verifyListParent, verifySettle } from "./verify.ts";
 import type { ChainTx } from "./types.ts";
@@ -42,6 +43,19 @@ export function routePath(pathname: string): string {
 /** Canonical trailing slash: the bare mount path 308s to `${MOUNT}/`. */
 export function mountRedirect(pathname: string): string | null {
   return pathname === MOUNT ? `${MOUNT}/` : null;
+}
+
+/** The BRC-100 app origin: serves the UI (installed via `bsv app install`). */
+export const MARKET_HOST = "market.entangleit.com";
+
+export function isMarketHost(hostname: string): boolean {
+  return hostname.toLowerCase() === MARKET_HOST;
+}
+
+/** UI asset for a path, or null. `/` maps to the app's index. */
+export function uiAsset(pathname: string): { body: string; type: string } | null {
+  const key = pathname === "/" ? "/index.html" : pathname;
+  return UI_ASSETS[key] ?? null;
 }
 
 function err(code: string, message: string): Response {
@@ -82,6 +96,16 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const url = new URL(req.url);
+    // BRC-100 app origin: the UI, served same-origin with the API.
+    if (isMarketHost(url.hostname) && req.method === "GET") {
+      const asset = uiAsset(url.pathname);
+      if (asset) {
+        return new Response(asset.body, {
+          status: 200,
+          headers: { "content-type": asset.type, "cache-control": "no-store" },
+        });
+      }
+    }
     const redirect = mountRedirect(url.pathname);
     if (redirect) {
       return new Response(null, {

@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Generic atomic-swap order book: ordinals today, BSV21 tomorrow. No custody, no escrow — the chain settles, the worker only matches and verifies.",
   "scripts": {
+    "build:ui": "node scripts/build-ui.mjs",
     "test": "node --test 'test/**/*.test.mjs'",
-    "deploy": "npx wrangler d1 execute atomic-market --file=./schema.sql && npx wrangler deploy"
+    "deploy": "node scripts/build-ui.mjs && npx wrangler d1 execute atomic-market --remote --file=./schema.sql && npx wrangler deploy"
   }
 }

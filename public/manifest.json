@@ -1,0 +1,18 @@
+{
+  "name": "Atomic Market",
+  "short_name": "Market",
+  "start_url": "/",
+  "icons": [],
+  "metanet": {
+    "schemaVersion": "1",
+    "intents": [
+      { "action": "app-swap", "label": "MARKET-BUY", "description": "atomic market purchase" },
+      { "action": "app-spend", "label": "MARKET-BUY", "description": "direct market purchase" },
+      { "action": "app-swap-offer", "label": "MARKET-LIST", "description": "atomic market listing" }
+    ],
+    "groupPermissions": {
+      "description": "Atomic market: browse listings, buy ordinals and BSV21 tokens with OS custody, list your own. Assets stay in the wallet until sold.",
+      "spendingAuthorization": { "amount": 100000000, "description": "asset buys; each buy still gates on policy" }
+    }
+  }
+}
