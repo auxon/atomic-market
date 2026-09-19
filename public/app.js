@@ -136,7 +136,15 @@ function listingCard(l) {
     cancel.textContent = "Cancel";
     cancel.addEventListener("click", async () => {
       cancel.disabled = true;
+      setStatus(status, "unlocking on-chain…");
       try {
+        if (l.offer && typeof l.offer === "object" && l.offer.kind === "ordlock") {
+          try {
+            await bsv.ordlockCancel(l.origin);
+          } catch (e) {
+            /* already spent or not ours; the market cancel below still runs */
+          }
+        }
         await marketFetch("/v1/market/cancel", { origin: l.origin, seller: state.address });
         await loadListings();
       } catch (e) {
@@ -214,7 +222,9 @@ async function buyListing(listing, row, status) {
       const memo = ["MARKET-BUY", fresh.origin];
       let res;
       const offer = offerFromListing(fresh);
-      if (offer) {
+      if (offer && offer.kind === "ordlock") {
+        res = await bsv.ordlockBuy(fresh.origin, feeOpt);
+      } else if (offer) {
         res = await bsv.completeSwap(offer, feeOpt, memo, {
           expectedSeller: fresh.seller,
           maxPrice: fresh.priceSats,
@@ -317,7 +327,7 @@ function sellCard({ title, subtitle, outpoint, assetKind, tokenId, tokenAmount, 
   const list = document.createElement("button");
   list.type = "button";
   list.className = "chip";
-  list.textContent = "List";
+  list.textContent = "List (locks on-chain)";
   const status = document.createElement("div");
   status.className = "status";
   list.addEventListener("click", async () => {
@@ -332,17 +342,23 @@ function sellCard({ title, subtitle, outpoint, assetKind, tokenId, tokenAmount, 
       return;
     }
     list.disabled = true;
-    setStatus(status, "signing offer…");
     try {
-      const offer = await bsv.signSwapOffer(
-        parts.txid, parts.vout, priceSats,
-        assetKind === "bsv21" ? "bsv21" : undefined,
-        assetKind === "bsv21" ? tokenId : undefined,
-        assetKind === "bsv21" ? tokenAmount : undefined,
-      );
+      let listingOrigin = outpoint.replace("_", ".");
+      let offer;
+      let note = "";
+      if (assetKind === "bsv21") {
+        setStatus(status, "signing offer…");
+        offer = await bsv.signSwapOffer(parts.txid, parts.vout, priceSats, "bsv21", tokenId, tokenAmount);
+      } else {
+        setStatus(status, "locking on-chain (miner fee)…");
+        const locked = await bsv.ordlockLock(parts.txid, parts.vout, priceSats);
+        listingOrigin = locked.lockOutpoint;
+        offer = { version: 5, kind: "ordlock", priceSats, lockTime: 0 };
+        note = ` · lock fee ${fmtSats(locked.fee)}`;
+      }
       setStatus(status, "posting listing…");
       await marketFetch("/v1/market/list", {
-        origin: outpoint.replace("_", "."),
+        origin: listingOrigin,
         assetKind,
         title,
         ...(image ? { image } : {}),
@@ -353,7 +369,7 @@ function sellCard({ title, subtitle, outpoint, assetKind, tokenId, tokenAmount, 
         feeAddress: state.fee ? state.fee.feeAddress : state.address,
         metadata: { source: "market-app" },
       });
-      setStatus(status, `listed · ${outpoint}`, "status ok");
+      setStatus(status, `listed · ${listingOrigin.slice(0, 22)}…${note}`, "status ok");
     } catch (e) {
       setStatus(status, bridgeError(e), "status warn");
       list.disabled = false;

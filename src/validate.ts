@@ -72,11 +72,17 @@ export function validateOffer(offer: unknown, origin: string, priceSats: number)
     fail("BAD_PARAM", "offer must be an object");
   }
   const o = offer as Record<string, unknown>;
-  if (!isP2PKH(String(o.payScriptHex ?? ""))) fail("BAD_PARAM", "offer.payScriptHex must be a P2PKH script");
-  if (Math.floor(Number(o.priceSats)) !== priceSats) fail("BAD_PARAM", "offer.priceSats must equal the listing price");
-  if (o.lockTime !== 0) fail("BAD_PARAM", "offer.lockTime must be 0");
   const kind = o.kind;
   const version = Number(o.version);
+  if (Math.floor(Number(o.priceSats)) !== priceSats) fail("BAD_PARAM", "offer.priceSats must equal the listing price");
+  if (o.lockTime !== 0) fail("BAD_PARAM", "offer.lockTime must be 0");
+  if (kind === "ordlock") {
+    // The covenant lives on-chain; the worker decodes the lock script and
+    // re-checks price + payout in verify.ts.
+    if (version !== 5) fail("BAD_PARAM", "ordlock offers must be v5");
+    return { version: 5, kind: "ordlock", priceSats, lockTime: 0 };
+  }
+  if (!isP2PKH(String(o.payScriptHex ?? ""))) fail("BAD_PARAM", "offer.payScriptHex must be a P2PKH script");
   if (kind === "ordinal") {
     if (version !== 4) fail("BAD_PARAM", "ordinal offers must be v4 (v2 is not indexer-safe)");
     if (!Array.isArray(o.inputs) || o.inputs.length !== 2) {
@@ -165,16 +171,15 @@ export function validateListing(body: NewListing): Omit<Listing,
   }
   const origin = `${outpoint!.txid}.${outpoint!.vout}`;
   const offer = raw.offer === undefined || raw.offer === null ? null : validateOffer(raw.offer, origin, priceSats);
-  // Atomic listings are paused. v2 was funds-unsafe (inscription to the
-  // payment output); v4 is funds-safe but the indexer cannot resolve the
-  // buyer's output (the lazy backward crawl attributes the first sat to
-  // the offer's prefix input, so the NFT vanishes from wallets). Both
-  // indexer directions agree only for OrdLock-style covenants, which
-  // ship next. Direct sales are unaffected.
-  if (offer) {
+  // Pre-signed ordinal offers (v2/v4) stay blocked: v2 sends the
+  // inscription to the payment output; v4 is funds-safe but the indexer's
+  // lazy backward crawl attributes the buyer's output to the prefix, so
+  // the NFT vanishes from wallets. OrdLock (v5) is the indexer-safe path;
+  // v3 BSV21 swaps are envelope-tracked and stay valid.
+  if (offer && (offer as { kind?: string }).kind === "ordinal") {
     fail(
       "BAD_PARAM",
-      "atomic listings are paused: pre-signed offers are not indexer-resolvable; OrdLock listings ship next (direct sales work today)",
+      "pre-signed ordinal offers are not indexer-resolvable; list with OrdLock instead",
     );
   }
   let tokenId: string | null = null;
@@ -202,7 +207,9 @@ export function validateListing(body: NewListing): Omit<Listing,
     sellerHandle: optStr(raw.sellerHandle, 64, "sellerHandle"),
     offer,
     sellerUnlock: null,
-    payScript: offer ? (offer as { payScriptHex: string }).payScriptHex : null,
+    payScript: offer && (offer as { payScriptHex?: string }).payScriptHex
+      ? (offer as { payScriptHex: string }).payScriptHex
+      : null, // ordlock: pinned from the lock script at list time
     inputScript: null,
     tokenId,
     tokenAmount,

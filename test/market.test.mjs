@@ -9,6 +9,7 @@ import { d1Store, memoryStore } from "../src/store.ts";
 const P2PKH_A = `76a914${"11".repeat(20)}88ac`;
 const P2PKH_B = `76a914${"22".repeat(20)}88ac`;
 const TX = "a".repeat(64);
+const TO = "1LVDqy9JjDd2ceXqPULKs39pxPBFo2GcrU";
 const TX2 = "b".repeat(64);
 
 const tx = (vin, vout) => ({
@@ -88,13 +89,16 @@ test("validateListing pauses atomic offers but accepts direct sales", () => {
       { txid: TX, vout: 1, scriptHex: P2PKH_A, sequence: 0xffffffff, unlockHex: "cd".repeat(60) },
     ],
   };
-  assert.throws(() => validateListing(atomicBody(v4)), /paused/);
+  assert.throws(() => validateListing(atomicBody(v4)), /not indexer-resolvable/);
   const v3 = {
     version: 3, kind: "bsv21", priceSats: 1000, lockTime: 0, payScriptHex: P2PKH_A,
     input: { txid: TX, vout: 1, scriptHex: P2PKH_A, sequence: 0xffffffff },
     unlockHex: "ab".repeat(60), tokenId: `${TX2}_0`, tokenAmount: "100",
   };
-  assert.throws(() => validateListing(atomicBody(v3)), /paused/);
+  // v3 BSV21 swaps are envelope-tracked and stay listable
+  const listed = validateListing(atomicBody(v3));
+  assert.equal(listed.offer.kind, "bsv21");
+  assert.equal(listed.tokenAmount, "100");
   // the shapes themselves stay valid for the future OrdLock-compatible path
   assert.equal(validateOffer(v4, `${TX}.1`, 100).kind, "ordinal");
   assert.equal(validateOffer(v3, `${TX}.1`, 1000).tokenAmount, "100");
@@ -429,4 +433,54 @@ test("operatorFee declares defaults and honors env", async () => {
   assert.equal(operatorFee({ MARKET_FEE_BPS: "-5" }).feeBps, DEFAULT_FEE_BPS);
   assert.equal(operatorFee({ MARKET_FEE_BPS: "20000" }).feeBps, DEFAULT_FEE_BPS);
   assert.equal(operatorFee({ MARKET_FEE_ADDRESS: "  " }).feeAddress, DEFAULT_FEE_ADDRESS);
+});
+
+test("ordlock offers validate and verify against the lock script", async () => {
+  const { isOrdLockScript, decodeOrdLockTerms } = await import("../src/verify.ts");
+  // build a real lock script with the daemon's own template bytes
+  const { ordlockLockScript } = await import("/home/rah/bsv-os/packages/walletd/src/ordlock.ts");
+  const script = ordlockLockScript(TO, TO, 7000).toHex();
+  assert.equal(isOrdLockScript(script), true);
+  const terms = decodeOrdLockTerms(script);
+  assert.equal(terms.price, 7000);
+  assert.equal(terms.payoutScriptHex.startsWith("76a914"), true);
+  assert.equal(isOrdLockScript(P2PKH_A), false);
+
+  // listing shape: v5, no pre-signed inputs
+  const offer = { version: 5, kind: "ordlock", priceSats: 7000, lockTime: 0 };
+  const draft = validateListing({
+    origin: `${TX}.0`, title: "Locked ticket", priceSats: 7000,
+    seller: "1Seller", feeAddress: "1Fee", offer,
+  });
+  assert.equal(draft.offer.kind, "ordlock");
+  assert.equal(draft.payScript, null); // pinned from the lock script at list time
+  assert.throws(() => validateListing({
+    origin: `${TX}.0`, title: "T", priceSats: 7000, seller: "1S", feeAddress: "1F",
+    offer: { version: 4, kind: "ordlock", priceSats: 7000, lockTime: 0 },
+  }), /v5/);
+  assert.throws(() => validateListing({
+    origin: `${TX}.0`, title: "T", priceSats: 7000, seller: "1S", feeAddress: "1F",
+    offer: { version: 5, kind: "ordlock", priceSats: 6000, lockTime: 0 },
+  }), /price/);
+
+  // chain verification: the lock output must exist, be 1 sat, and match the price
+  const lockTx = tx([], [[1, script]]);
+  const parent = await verifyListParent(async () => lockTx, {
+    origin: `${TX}.0`, assetKind: "ordinal", offer, tokenId: null, tokenAmount: null, priceSats: 7000,
+  });
+  assert.equal(parent.value, 1);
+  assert.ok(parent.payScriptHex.startsWith("76a914"));
+  await rejectsCode(
+    verifyListParent(async () => lockTx, {
+      origin: `${TX}.0`, assetKind: "ordinal", offer, tokenId: null, tokenAmount: null, priceSats: 6000,
+    }),
+    "BAD_PARAM",
+  );
+  const notLock = tx([], [[1, P2PKH_A]]);
+  await rejectsCode(
+    verifyListParent(async () => notLock, {
+      origin: `${TX}.0`, assetKind: "ordinal", offer, tokenId: null, tokenAmount: null, priceSats: 7000,
+    }),
+    "BAD_PARAM",
+  );
 });

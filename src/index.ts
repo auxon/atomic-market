@@ -192,7 +192,10 @@ export default {
           buyTxid: null, buyerHandle: null, transferTxid: null,
           createdAt: now, updatedAt: now,
         };
-        await verifyListParent(fetchTx, listing);
+        const parent = await verifyListParent(fetchTx, listing);
+        // OrdLock listings pay the seller via the lock's embedded payout:
+        // pin it so the buy check matches byte-exact.
+        if (parent.payScriptHex) listing.payScript = parent.payScriptHex;
         await store.insert(listing);
         return json({ ok: true, origin: listing.origin });
       }
