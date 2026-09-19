@@ -362,3 +362,16 @@ test("d1Store remove binds the origin", async () => {
   assert.match(calls[0], /DELETE FROM listings WHERE origin = \?/);
   assert.deepEqual(calls[1], [`${TX}.0`]);
 });
+
+test("operatorFee declares defaults and honors env", async () => {
+  const { operatorFee, DEFAULT_FEE_BPS, DEFAULT_FEE_ADDRESS } = await import("../src/index.ts");
+  assert.deepEqual(operatorFee({}), { feeBps: DEFAULT_FEE_BPS, feeAddress: DEFAULT_FEE_ADDRESS });
+  assert.equal(operatorFee({}).feeBps, 200);
+  assert.deepEqual(operatorFee({ MARKET_FEE_BPS: "0" }), { feeBps: 0, feeAddress: DEFAULT_FEE_ADDRESS });
+  assert.deepEqual(operatorFee({ MARKET_FEE_BPS: "50", MARKET_FEE_ADDRESS: "1Op" }), { feeBps: 50, feeAddress: "1Op" });
+  // malformed values fall back, never throw
+  assert.equal(operatorFee({ MARKET_FEE_BPS: "nope" }).feeBps, DEFAULT_FEE_BPS);
+  assert.equal(operatorFee({ MARKET_FEE_BPS: "-5" }).feeBps, DEFAULT_FEE_BPS);
+  assert.equal(operatorFee({ MARKET_FEE_BPS: "20000" }).feeBps, DEFAULT_FEE_BPS);
+  assert.equal(operatorFee({ MARKET_FEE_ADDRESS: "  " }).feeAddress, DEFAULT_FEE_ADDRESS);
+});

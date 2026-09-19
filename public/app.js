@@ -9,10 +9,15 @@ const inRunner = !!(bsv && bsv.isBSVOS === true);
 
 const $ = (id) => document.getElementById(id);
 
-const state = { kind: "", listings: [], address: "", view: "browse" };
+const state = { kind: "", listings: [], address: "", view: "browse", fee: null };
 
 function fmtSats(n) {
   return `${Math.floor(Number(n) || 0).toLocaleString()} sats`;
+}
+
+function fmtPct(bps) {
+  const n = Number(bps) || 0;
+  return `${(n / 100).toFixed(n % 100 === 0 ? 0 : 2)}%`;
 }
 
 function short(s, n = 14) {
@@ -80,6 +85,11 @@ function listingCard(l) {
   const seller = document.createElement("span");
   seller.textContent = `seller ${short(l.seller, 10)}`;
   meta.append(kind, seller);
+  if (Number(l.feeBps) > 0) {
+    const fee = document.createElement("span");
+    fee.textContent = `fee ${fmtPct(l.feeBps)}`;
+    meta.append(fee);
+  }
   const price = document.createElement("div");
   price.className = "price";
   price.textContent = fmtSats(l.priceSats);
@@ -171,9 +181,11 @@ function feeSatsFor(l) {
 async function buyListing(listing, row, status) {
   row.textContent = "";
   const atomic = !!(listing.sellerUnlock && listing.payScript && listing.inputScript);
-  setStatus(status, atomic
+  const fee = feeSatsFor(listing);
+  setStatus(status, (atomic
     ? `Atomic: ${fmtSats(listing.priceSats)} → seller. Payment + asset settle in one tx.`
-    : `Direct: ${fmtSats(listing.priceSats)} → ${short(listing.seller, 12)}. Pay first — delivery by the seller.`);
+    : `Direct: ${fmtSats(listing.priceSats)} → ${short(listing.seller, 12)}. Pay first — delivery by the seller.`)
+    + (fee > 0 ? ` Market fee ${fmtSats(fee)} (${fmtPct(listing.feeBps)}).` : ""));
   const go = document.createElement("button");
   go.type = "button";
   go.className = "chip";
@@ -316,8 +328,8 @@ function sellCard({ title, subtitle, outpoint, assetKind, tokenId, tokenAmount, 
         sellerUnlock: offer.unlockHex,
         payScript: offer.payScriptHex,
         ...(assetKind === "bsv21" ? { tokenId, tokenAmount } : {}),
-        feeBps: 0,
-        feeAddress: state.address,
+        feeBps: state.fee ? state.fee.feeBps : 0,
+        feeAddress: state.fee ? state.fee.feeAddress : state.address,
         metadata: { source: "market-app" },
       });
       setStatus(status, `listed · ${outpoint}`, "status ok");
@@ -416,6 +428,15 @@ $("refresh").addEventListener("click", () => {
 
 (async () => {
   if (!inRunner) $("runner-banner").classList.remove("hidden");
+  try {
+    const fees = await (await fetch("/v1/market/fees")).json();
+    if (fees && Number.isFinite(Number(fees.feeBps))) state.fee = fees;
+  } catch {
+    /* fee endpoint unreachable: listings go out without a fee */
+  }
+  $("fee-note").textContent = state.fee
+    ? `Market operator fee: ${fmtPct(state.fee.feeBps)} to ${short(state.fee.feeAddress, 14)} — included automatically when you list.`
+    : "Market fee unavailable right now; listings will post without one.";
   if (inRunner) {
     try {
       const bal = await bsv.getBalance();

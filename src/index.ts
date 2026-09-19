@@ -52,6 +52,27 @@ export function isMarketHost(hostname: string): boolean {
   return hostname.toLowerCase() === MARKET_HOST;
 }
 
+/**
+ * Operator fee the market declares to sellers: the default a client should
+ * put on new listings. Per-listing terms stay the seller's choice; buyers
+ * pay whatever the listing says. Overridable per deployment.
+ */
+export const DEFAULT_FEE_BPS = 200;
+export const DEFAULT_FEE_ADDRESS = "1DHBH964yuvJnneuUe7EKFpVyJK1Vkz8Y4";
+
+export function operatorFee(env: { MARKET_FEE_BPS?: string; MARKET_FEE_ADDRESS?: string }): {
+  feeBps: number;
+  feeAddress: string;
+} {
+  const raw = Math.floor(Number(env.MARKET_FEE_BPS ?? DEFAULT_FEE_BPS));
+  const feeBps = Number.isFinite(raw) && raw >= 0 && raw <= 10000 ? raw : DEFAULT_FEE_BPS;
+  const feeAddress =
+    typeof env.MARKET_FEE_ADDRESS === "string" && env.MARKET_FEE_ADDRESS.trim()
+      ? env.MARKET_FEE_ADDRESS.trim()
+      : DEFAULT_FEE_ADDRESS;
+  return { feeBps, feeAddress };
+}
+
 /** UI asset for a path, or null. `/` maps to the app's index. */
 export function uiAsset(pathname: string): { body: string; type: string } | null {
   const key = pathname === "/" ? "/index.html" : pathname;
@@ -143,6 +164,10 @@ export default {
         const listings = await store.listRecent(Number(url.searchParams.get("limit")) || 50);
         return json({ listings });
       }
+      // GET /v1/market/fees — the operator fee sellers should list with.
+      if (req.method === "GET" && path === "/v1/market/fees") {
+        return json(operatorFee(env));
+      }
       // GET /v1/market/listing/:origin
       {
         const m = /^\/v1\/market\/listing\/(.+)$/.exec(path);
@@ -223,6 +248,7 @@ export default {
           endpoints: {
             listings: "GET /v1/market[?kind=ordinal|bsv21]",
             recent: "GET /v1/market/recent[?limit=]",
+            fees: "GET /v1/market/fees",
             listing: "GET /v1/market/listing/:origin",
             list: "POST /v1/market/list",
             buy: "POST /v1/market/buy",
