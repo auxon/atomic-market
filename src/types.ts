@@ -17,6 +17,8 @@ export interface Listing {
   priceSats: number;
   seller: string;
   sellerHandle: string | null;
+  /** Atomic offer (v4 ordinal dual-input or v3 bsv21), stored verbatim. */
+  offer: unknown | null;
   sellerUnlock: string | null;
   payScript: string | null;
   inputScript: string | null;
@@ -42,6 +44,7 @@ export interface NewListing {
   priceSats?: unknown;
   seller?: unknown;
   sellerHandle?: unknown;
+  offer?: unknown;
   sellerUnlock?: unknown;
   payScript?: unknown;
   tokenId?: unknown;

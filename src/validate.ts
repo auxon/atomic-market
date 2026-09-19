@@ -33,6 +33,90 @@ export function isP2PKH(scriptHex: string): boolean {
   return /^[0-9a-fA-F]{50}$/.test(scriptHex) && scriptHex.toLowerCase().startsWith("76a914") && scriptHex.toLowerCase().endsWith("88ac");
 }
 
+const SEQ_FINAL = 0xffffffff;
+
+function outpointOf(txid: unknown, vout: unknown): string | null {
+  if (typeof txid !== "string" || !/^[0-9a-fA-F]{64}$/.test(txid)) return null;
+  const n = Number(vout);
+  if (!Number.isInteger(n) || n < 0 || n > 0xffffffff) return null;
+  return `${txid.toLowerCase()}.${n}`;
+}
+
+function offerInput(v: unknown, i: number): { txid: string; vout: number; scriptHex: string; sequence: number } {
+  if (!v || typeof v !== "object") fail("BAD_PARAM", `offer.inputs[${i}] must be an object`);
+  const o = v as Record<string, unknown>;
+  const origin = outpointOf(o.txid, o.vout);
+  if (!origin) fail("BAD_PARAM", `offer.inputs[${i}] must be a 64-hex txid + vout`);
+  if (!isHex(o.scriptHex)) fail("BAD_PARAM", `offer.inputs[${i}].scriptHex must be hex`);
+  if (o.sequence !== undefined && Number(o.sequence) !== SEQ_FINAL) {
+    fail("BAD_PARAM", `offer.inputs[${i}].sequence must be final`);
+  }
+  const [txid, vout] = origin.split(".");
+  return {
+    txid: txid!,
+    vout: Number(vout),
+    scriptHex: String(o.scriptHex).toLowerCase(),
+    sequence: SEQ_FINAL,
+  };
+}
+
+/**
+ * Atomic offer shape check (chain truth is verified in verify.ts):
+ * - v4 ordinal: dual inputs [1-sat plain prefix, inscribed carrier], the
+ *   carrier is the listing origin, FIFO-safe output order is the buyer's job.
+ * - v3 bsv21: single exact-amount token carrier with its transfer envelope.
+ * Legacy v2 (sellerUnlock/payScript) is refused outright — not indexer-safe.
+ */
+export function validateOffer(offer: unknown, origin: string, priceSats: number): unknown {
+  if (!offer || typeof offer !== "object" || Array.isArray(offer)) {
+    fail("BAD_PARAM", "offer must be an object");
+  }
+  const o = offer as Record<string, unknown>;
+  if (!isP2PKH(String(o.payScriptHex ?? ""))) fail("BAD_PARAM", "offer.payScriptHex must be a P2PKH script");
+  if (Math.floor(Number(o.priceSats)) !== priceSats) fail("BAD_PARAM", "offer.priceSats must equal the listing price");
+  if (o.lockTime !== 0) fail("BAD_PARAM", "offer.lockTime must be 0");
+  const kind = o.kind;
+  const version = Number(o.version);
+  if (kind === "ordinal") {
+    if (version !== 4) fail("BAD_PARAM", "ordinal offers must be v4 (v2 is not indexer-safe)");
+    if (!Array.isArray(o.inputs) || o.inputs.length !== 2) {
+      fail("BAD_PARAM", "v4 offers carry exactly two inputs (1-sat prefix + carrier)");
+    }
+    const rawInputs = o.inputs as Array<Record<string, unknown>>;
+    const inputs = [offerInput(rawInputs[0], 0), offerInput(rawInputs[1], 1)];
+    const unlocks = rawInputs.map((it, i) => {
+      if (!isHex(it?.unlockHex)) fail("BAD_PARAM", `offer.inputs[${i}].unlockHex must be hex`);
+      return String(it.unlockHex).toLowerCase();
+    });
+    if (origin !== `${inputs[1]!.txid}.${inputs[1]!.vout}`) {
+      fail("BAD_PARAM", "listing origin must be the carrier (offer.inputs[1])");
+    }
+    return {
+      version: 4, kind: "ordinal",
+      inputs: inputs.map((input, i) => ({ ...input, unlockHex: unlocks[i]! })),
+      payScriptHex: String(o.payScriptHex).toLowerCase(), priceSats, lockTime: 0,
+    };
+  }
+  if (kind === "bsv21") {
+    if (version !== 3) fail("BAD_PARAM", "bsv21 offers must be v3");
+    const input = offerInput(o.input, 0);
+    if (!isHex(o.unlockHex)) fail("BAD_PARAM", "offer.unlockHex must be hex");
+    if (origin !== `${input.txid}.${input.vout}`) {
+      fail("BAD_PARAM", "listing origin must be the token carrier (offer.input)");
+    }
+    const id = typeof o.tokenId === "string" ? o.tokenId.trim().toLowerCase() : "";
+    if (!/^([0-9a-f]{64})_(\d+)$/.test(id)) fail("BAD_PARAM", "offer.tokenId must be <64-hex-txid>_<vout>");
+    const amt = typeof o.tokenAmount === "string" ? o.tokenAmount.trim() : "";
+    if (!/^\d+$/.test(amt) || amt === "0") fail("BAD_PARAM", "offer.tokenAmount must be a positive base-unit integer string");
+    return {
+      version: 3, kind: "bsv21", input, unlockHex: String(o.unlockHex).toLowerCase(),
+      payScriptHex: String(o.payScriptHex).toLowerCase(), priceSats, lockTime: 0,
+      tokenId: id, tokenAmount: String(BigInt(amt)),
+    };
+  }
+  fail("BAD_PARAM", "offer.kind must be ordinal or bsv21");
+}
+
 function optStr(v: unknown, max: number, name: string): string | null {
   if (v === undefined || v === null) return null;
   if (typeof v !== "string" || !v.trim() || v.length > max) fail("BAD_PARAM", `${name} must be 1-${max} chars`);
@@ -69,32 +153,35 @@ export function validateListing(body: NewListing): Omit<Listing,
   }
   const feeAddress = reqStr((body as NewListing).feeAddress, 64, "feeAddress");
   const raw = body as NewListing;
-  const sellerUnlock = raw.sellerUnlock === undefined || raw.sellerUnlock === null ? null : String(raw.sellerUnlock);
-  const payScript = raw.payScript === undefined || raw.payScript === null ? null : String(raw.payScript);
-  if (sellerUnlock !== null && !isHex(sellerUnlock)) fail("BAD_PARAM", "sellerUnlock must be hex");
-  if (payScript !== null && !isP2PKH(payScript)) fail("BAD_PARAM", "payScript must be a P2PKH script");
-  if ((sellerUnlock === null) !== (payScript === null)) {
-    fail("BAD_PARAM", "atomic offers need both sellerUnlock and payScript; direct sales need neither");
-  }
-  // v2 (single-input) offers are not indexer-safe: the 1Sat indexer assigns
-  // the inscribed sat to the FIRST output (FIFO), which v2 makes the seller
-  // payment — so a buyer would pay and receive nothing. Blocked until the
-  // dual-input v4 offer ships.
-  if (sellerUnlock !== null) {
+  // Legacy v2 shape: refused outright (not indexer-safe).
+  if (raw.sellerUnlock !== undefined && raw.sellerUnlock !== null) {
     fail(
       "BAD_PARAM",
       "v2 atomic offers are not indexer-safe (the inscribed sat lands on the payment output); re-list with a v4 offer",
     );
   }
+  if (raw.payScript !== undefined && raw.payScript !== null) {
+    fail("BAD_PARAM", "payScript belongs inside the offer object");
+  }
+  const origin = `${outpoint!.txid}.${outpoint!.vout}`;
+  const offer = raw.offer === undefined || raw.offer === null ? null : validateOffer(raw.offer, origin, priceSats);
+  // Atomic listings are paused. v2 was funds-unsafe (inscription to the
+  // payment output); v4 is funds-safe but the indexer cannot resolve the
+  // buyer's output (the lazy backward crawl attributes the first sat to
+  // the offer's prefix input, so the NFT vanishes from wallets). Both
+  // indexer directions agree only for OrdLock-style covenants, which
+  // ship next. Direct sales are unaffected.
+  if (offer) {
+    fail(
+      "BAD_PARAM",
+      "atomic listings are paused: pre-signed offers are not indexer-resolvable; OrdLock listings ship next (direct sales work today)",
+    );
+  }
   let tokenId: string | null = null;
   let tokenAmount: string | null = null;
-  if (assetKind === "bsv21") {
-    const id = typeof raw.tokenId === "string" ? raw.tokenId.trim().toLowerCase() : "";
-    if (!/^([0-9a-f]{64})_(\d+)$/.test(id)) fail("BAD_PARAM", "tokenId must be <64-hex-txid>_<vout>");
-    tokenId = id;
-    const amt = typeof raw.tokenAmount === "string" ? raw.tokenAmount.trim() : "";
-    if (!/^\d+$/.test(amt) || amt === "0") fail("BAD_PARAM", "tokenAmount must be a positive base-unit integer string");
-    tokenAmount = String(BigInt(amt));
+  if (offer && (offer as { kind: string }).kind === "bsv21") {
+    tokenId = (offer as { tokenId: string }).tokenId;
+    tokenAmount = (offer as { tokenAmount: string }).tokenAmount;
   }
   let metadata: Record<string, unknown> = {};
   if (raw.metadata !== undefined && raw.metadata !== null) {
@@ -104,7 +191,7 @@ export function validateListing(body: NewListing): Omit<Listing,
     metadata = raw.metadata as Record<string, unknown>;
   }
   return {
-    origin: `${outpoint!.txid}.${outpoint!.vout}`,
+    origin,
     assetKind,
     title,
     image: optStr(raw.image, 500, "image"),
@@ -113,8 +200,10 @@ export function validateListing(body: NewListing): Omit<Listing,
     priceSats,
     seller,
     sellerHandle: optStr(raw.sellerHandle, 64, "sellerHandle"),
-    sellerUnlock,
-    payScript,
+    offer,
+    sellerUnlock: null,
+    payScript: offer ? (offer as { payScriptHex: string }).payScriptHex : null,
+    inputScript: null,
     tokenId,
     tokenAmount,
     feeBps,

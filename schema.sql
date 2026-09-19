@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS listings (
   price_sats INTEGER NOT NULL,
   seller TEXT NOT NULL,             -- seller address
   seller_handle TEXT,
-  seller_unlock TEXT,               -- atomic offer pre-sig (SINGLE|ANYONECANPAY); null = direct sale
+  offer_json TEXT,                  -- atomic offer (v4 ordinal dual-input or v3 bsv21); null = direct sale
+  seller_unlock TEXT,               -- legacy v2 field (unused; v2 offers refused)
   pay_script TEXT,                  -- seller P2PKH hex (atomic offers)
   input_script TEXT,                -- carrier locking script hex (atomic offers; buyers verify against chain)
   token_id TEXT,                    -- bsv21 "<txid>_<vout>"

@@ -35,26 +35,44 @@ function carriesTokens(scriptHex: string, tokenId: string, tokenAmount: string):
   return scriptHex.toLowerCase().includes(transferJsonHex(tokenId, tokenAmount));
 }
 
-/** The listed asset outpoint must exist on chain. Atomic ordinal carriers must be 1 sat. */
-export async function verifyListParent(fetchTx: FetchTx, listing: Pick<Listing, "origin" | "assetKind" | "sellerUnlock" | "tokenId" | "tokenAmount">): Promise<{ scriptHex: string; value: number }> {
+/** The listed asset outpoint must exist on chain. Atomic offers pin every input. */
+export async function verifyListParent(
+  fetchTx: FetchTx,
+  listing: Pick<Listing, "origin" | "assetKind" | "offer" | "tokenId" | "tokenAmount">,
+): Promise<{ scriptHex: string; value: number }> {
   const parts = parseOutpoint(listing.origin);
   if (!parts) fail("BAD_PARAM", "origin must be <64-hex-txid>.<vout>");
   const tx = await fetchTx(parts!.txid);
   if (!tx) fail("PARENT_MISSING", `asset parent ${parts!.txid} not found on chain`);
   const out = (tx!.vout ?? []).find((o) => Number(o.n) === parts!.vout);
   if (!out) fail("PARENT_MISSING", `asset outpoint ${listing.origin} not found on chain`);
-  if (listing.sellerUnlock === null) {
-    return { scriptHex: String(out!.scriptPubKey?.hex ?? ""), value: Number(out!.value) };
-  }
-  if (listing.assetKind === "ordinal") {
+  const carrier = { scriptHex: String(out!.scriptPubKey?.hex ?? ""), value: Number(out!.value) };
+  const offer = (listing.offer ?? null) as
+    | { version?: number; kind?: string; inputs?: Array<{ txid: string; vout: number }>; input?: { txid: string; vout: number } }
+    | null;
+  if (!offer) return carrier; // direct sale: existence is enough
+  if (offer.kind === "ordinal") {
     if (Number(out!.value) !== 1) fail("BAD_PARAM", "ordinal carriers must be exactly 1 sat");
-    return { scriptHex: String(out!.scriptPubKey?.hex ?? ""), value: Number(out!.value) };
+    // v4: the 1-sat prefix must exist too (it shifts the carrier to input 1)
+    const prefix = offer.inputs?.[0];
+    if (prefix) {
+      const ptx = await fetchTx(String(prefix.txid).toLowerCase());
+      if (!ptx) fail("PARENT_MISSING", `offer prefix ${prefix.txid} not found on chain`);
+      const pout = (ptx!.vout ?? []).find((o) => Number(o.n) === Number(prefix.vout));
+      if (!pout) fail("PARENT_MISSING", `offer prefix ${prefix.txid}.${prefix.vout} not found on chain`);
+      if (Number(pout!.value) !== 1) fail("BAD_PARAM", "offer prefix must be exactly 1 sat");
+    }
+    return carrier;
   }
-  if (!listing.tokenId || !listing.tokenAmount) fail("BAD_PARAM", "bsv21 listings need tokenId + tokenAmount");
-  if (!carriesTokens(String(out!.scriptPubKey?.hex ?? ""), listing.tokenId, listing.tokenAmount)) {
-    fail("BAD_PARAM", "parent outpoint is not the listed token output");
+  if (offer.kind === "bsv21") {
+    if (!listing.tokenId || !listing.tokenAmount) fail("BAD_PARAM", "bsv21 listings need tokenId + tokenAmount");
+    if (Number(out!.value) !== 1) fail("BAD_PARAM", "token carriers must be exactly 1 sat");
+    if (!carriesTokens(String(out!.scriptPubKey?.hex ?? ""), listing.tokenId, listing.tokenAmount)) {
+      fail("BAD_PARAM", "parent outpoint is not the listed token output");
+    }
+    return carrier;
   }
-  return { scriptHex: String(out!.scriptPubKey?.hex ?? ""), value: Number(out!.value) };
+  fail("BAD_PARAM", "offer kind must be ordinal or bsv21");
 }
 
 /**

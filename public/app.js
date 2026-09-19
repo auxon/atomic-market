@@ -120,7 +120,7 @@ function listingCard(l) {
     const buy = document.createElement("button");
     buy.type = "button";
     buy.className = "chip";
-    buy.textContent = l.sellerUnlock ? "Buy (atomic)" : "Buy (direct)";
+    buy.textContent = l.offer ? "Buy (atomic)" : "Buy (direct)";
     buy.addEventListener("click", () => buyListing(l, row, status));
     row.append(buy);
   } else {
@@ -175,17 +175,7 @@ async function loadListings() {
 // ── Buy (window.bsv) ────────────────────────────────────────────────
 
 function offerFromListing(l) {
-  const parts = parseOutpoint(l.origin);
-  if (!parts || !l.sellerUnlock || !l.payScript || !l.inputScript) return null;
-  return {
-    input: { txid: parts.txid, vout: parts.vout, scriptHex: l.inputScript, sequence: 4294967295 },
-    unlockHex: l.sellerUnlock,
-    payScriptHex: l.payScript,
-    priceSats: l.priceSats,
-    version: l.assetKind === "bsv21" ? 3 : 2,
-    lockTime: 0,
-    ...(l.assetKind === "bsv21" ? { kind: "bsv21", tokenId: l.tokenId, tokenAmount: l.tokenAmount } : {}),
-  };
+  return l.offer && typeof l.offer === "object" ? l.offer : null;
 }
 
 function feeSatsFor(l) {
@@ -196,7 +186,7 @@ function feeSatsFor(l) {
 
 async function buyListing(listing, row, status) {
   row.textContent = "";
-  const atomic = !!(listing.sellerUnlock && listing.payScript && listing.inputScript);
+  const atomic = !!(listing.offer && typeof listing.offer === "object");
   const fee = feeSatsFor(listing);
   setStatus(status, (atomic
     ? `Atomic: ${fmtSats(listing.priceSats)} → seller. Payment + asset settle in one tx.`
@@ -358,9 +348,7 @@ function sellCard({ title, subtitle, outpoint, assetKind, tokenId, tokenAmount, 
         ...(image ? { image } : {}),
         priceSats,
         seller: state.address,
-        sellerUnlock: offer.unlockHex,
-        payScript: offer.payScriptHex,
-        ...(assetKind === "bsv21" ? { tokenId, tokenAmount } : {}),
+        offer,
         feeBps: state.fee ? state.fee.feeBps : 0,
         feeAddress: state.fee ? state.fee.feeAddress : state.address,
         metadata: { source: "market-app" },

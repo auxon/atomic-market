@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { feeSats, isP2PKH, parseOutpoint, validateListing } from "../src/validate.ts";
+import { feeSats, isP2PKH, parseOutpoint, validateListing, validateOffer } from "../src/validate.ts";
 import { transferJsonHex, verifyBuy, verifyListParent, verifySettle } from "../src/verify.ts";
 import { routePath } from "../src/index.ts";
 import { mountRedirect } from "../src/index.ts";
@@ -64,21 +64,40 @@ test("validateListing blocks v2 atomic offers (not indexer-safe)", () => {
   assert.deepEqual(direct.metadata, { section: "A" });
 });
 
-test("validateListing accepts direct sales and bsv21", () => {
+test("validateListing pauses atomic offers but accepts direct sales", () => {
   const direct = validateListing({
     origin: `${TX}.3`, title: "Art", priceSats: 100,
     seller: "1Seller", feeAddress: "1Fee",
   });
   assert.equal(direct.assetKind, "ordinal"); // default
-  assert.equal(direct.sellerUnlock, null);
+  assert.equal(direct.offer, null);
+  assert.equal(direct.payScript, null);
   assert.equal(direct.feeBps, 200); // default
-  const token = validateListing({
-    origin: `${TX}.1`, assetKind: "bsv21", title: "100 STARS",
-    priceSats: 1000, seller: "1Seller", feeAddress: "1Fee",
-    tokenId: `${TX2}_0`, tokenAmount: "100",
+  // v4 ordinal and v3 bsv21 shapes are validated by validateOffer (unit
+  // tests below); the listing endpoint pauses every atomic offer until
+  // OrdLock ships, so both must refuse here.
+  const atomicBody = (offer) => ({
+    origin: `${TX}.1`, title: "Ticket", priceSats: offer.priceSats,
+    seller: "1Seller", feeAddress: "1Fee", assetKind: offer.kind === "bsv21" ? "bsv21" : "ordinal",
+    offer,
   });
-  assert.equal(token.tokenId, `${TX2}_0`);
-  assert.equal(token.tokenAmount, "100");
+  const v4 = {
+    version: 4, kind: "ordinal", priceSats: 100, lockTime: 0, payScriptHex: P2PKH_A,
+    inputs: [
+      { txid: TX2, vout: 0, scriptHex: P2PKH_B, sequence: 0xffffffff, unlockHex: "ab".repeat(60) },
+      { txid: TX, vout: 1, scriptHex: P2PKH_A, sequence: 0xffffffff, unlockHex: "cd".repeat(60) },
+    ],
+  };
+  assert.throws(() => validateListing(atomicBody(v4)), /paused/);
+  const v3 = {
+    version: 3, kind: "bsv21", priceSats: 1000, lockTime: 0, payScriptHex: P2PKH_A,
+    input: { txid: TX, vout: 1, scriptHex: P2PKH_A, sequence: 0xffffffff },
+    unlockHex: "ab".repeat(60), tokenId: `${TX2}_0`, tokenAmount: "100",
+  };
+  assert.throws(() => validateListing(atomicBody(v3)), /paused/);
+  // the shapes themselves stay valid for the future OrdLock-compatible path
+  assert.equal(validateOffer(v4, `${TX}.1`, 100).kind, "ordinal");
+  assert.equal(validateOffer(v3, `${TX}.1`, 1000).tokenAmount, "100");
 });
 
 test("validateListing rejects bad shapes", () => {
@@ -89,22 +108,52 @@ test("validateListing rejects bad shapes", () => {
   assert.throws(() => validateListing(null), /object/);
   assert.throws(() => validateListing({ ...good, origin: "nope" }), /origin/);
   assert.throws(() => validateListing({ ...good, priceSats: 0 }), /priceSats/);
-  assert.throws(() => validateListing({ ...good, payScript: P2PKH_A }), /both sellerUnlock and payScript/);
-  assert.throws(() => validateListing({ ...good, sellerUnlock: "ab" }), /both sellerUnlock and payScript/);
+  assert.throws(() => validateListing({ ...good, payScript: P2PKH_A }), /inside the offer/);
+  assert.throws(() => validateListing({ ...good, sellerUnlock: "ab" }), /v2 atomic offers/);
   assert.throws(() => validateListing({ ...good, feeBps: 10001 }), /feeBps/);
   assert.throws(() => validateListing({ ...good, assetKind: "doge" }), /assetKind/);
-  assert.throws(() => validateListing({ ...good, assetKind: "bsv21" }), /tokenId/);
-  assert.throws(() => validateListing({
-    ...good, assetKind: "bsv21", tokenId: `${TX2}_0`, tokenAmount: "0",
-  }), /tokenAmount/);
   assert.throws(() => validateListing({ ...good, metadata: [] }), /metadata/);
+  const v4 = (over = {}) => ({
+    version: 4, kind: "ordinal", priceSats: 100, lockTime: 0, payScriptHex: P2PKH_A,
+    inputs: [
+      { txid: TX2, vout: 0, scriptHex: P2PKH_B, sequence: 0xffffffff, unlockHex: "ab".repeat(60) },
+      { txid: TX, vout: 0, scriptHex: P2PKH_A, sequence: 0xffffffff, unlockHex: "cd".repeat(60) },
+    ],
+    ...over,
+  });
+  assert.throws(() => validateListing({ ...good, offer: { ...v4(), version: 2 } }), /v4/);
+  assert.throws(() => validateListing({ ...good, offer: { ...v4(), priceSats: 99 } }), /price/);
+  assert.throws(() => validateListing({ ...good, offer: v4({ inputs: [v4().inputs[0]] }) }), /two inputs/);
+  assert.throws(
+    () => validateListing({ ...good, offer: v4({ inputs: [v4().inputs[0], { ...v4().inputs[1], vout: 9 }] }) }),
+    /carrier/,
+  );
+  assert.throws(
+    () => validateListing({ ...good, offer: v4({ inputs: [v4().inputs[0], { ...v4().inputs[1], unlockHex: "zz" }] }) }),
+    /unlockHex/,
+  );
+  assert.throws(
+    () => validateListing({ ...good, offer: { ...v4(), payScriptHex: "00" } }),
+    /P2PKH/,
+  );
+  assert.throws(
+    () => validateListing({
+      ...good, assetKind: "bsv21",
+      offer: {
+        version: 3, kind: "bsv21", priceSats: 100, lockTime: 0, payScriptHex: P2PKH_A,
+        input: { txid: TX, vout: 0, scriptHex: P2PKH_A, sequence: 0xffffffff },
+        unlockHex: "ab".repeat(60), tokenId: "nope", tokenAmount: "1",
+      },
+    }),
+    /tokenId/,
+  );
 });
 
 function listing(over = {}) {
   return {
     origin: `${TX}.0`, assetKind: "ordinal", title: "T", image: null,
     description: null, metadata: {}, priceSats: 5000, seller: "1Seller",
-    sellerHandle: null, sellerUnlock: "ab".repeat(50), payScript: P2PKH_A,
+    sellerHandle: null, offer: null, sellerUnlock: null, payScript: null,
     inputScript: null, tokenId: null, tokenAmount: null, feeBps: 200, feeAddress: "1Fee",
     status: "active", buyTxid: null, buyerHandle: null, transferTxid: null,
     createdAt: 1, updatedAt: 1,
@@ -122,22 +171,23 @@ test("verifyListParent requires the outpoint on chain", async () => {
   await rejectsCode(verifyListParent(fetchTx, listing({ origin: `${TX}.1` })), "PARENT_MISSING");
   const twoSat = { [TX]: tx([], [[2, P2PKH_A]]) };
   await rejectsCode(
-    verifyListParent(async () => twoSat[TX], listing()), "BAD_PARAM",
+    verifyListParent(async () => twoSat[TX], listing({ offer: { version: 4, kind: "ordinal" } })), "BAD_PARAM",
   );
 });
 
 test("verifyBuy checks exact payment + fee", async () => {
+  const atomic = listing({ payScript: P2PKH_A, offer: { version: 4, kind: "ordinal" } });
   const buy = tx([], [[5000, P2PKH_A], [100, "00", ["1Fee"]]]);
   const fetchTx = async () => buy;
-  await verifyBuy(fetchTx, listing(), TX2);
-  await rejectsCode(verifyBuy(fetchTx, listing({ priceSats: 5001 }), TX2), "BAD_PAYMENT");
-  await rejectsCode(verifyBuy(fetchTx, listing({ feeAddress: "1Other" }), TX2), "BAD_FEE");
+  await verifyBuy(fetchTx, atomic, TX2);
+  await rejectsCode(verifyBuy(fetchTx, { ...atomic, priceSats: 5001 }, TX2), "BAD_PAYMENT");
+  await rejectsCode(verifyBuy(fetchTx, { ...atomic, feeAddress: "1Other" }, TX2), "BAD_FEE");
   const noFee = tx([], [[5000, P2PKH_A]]);
-  await rejectsCode(verifyBuy(async () => noFee, listing(), TX2), "BAD_FEE");
-  await rejectsCode(verifyBuy(async () => null, listing(), TX2), "TX_UNKNOWN");
-  await rejectsCode(verifyBuy(fetchTx, listing(), "zzz"), "BAD_PARAM");
+  await rejectsCode(verifyBuy(async () => noFee, atomic, TX2), "BAD_FEE");
+  await rejectsCode(verifyBuy(async () => null, atomic, TX2), "TX_UNKNOWN");
+  await rejectsCode(verifyBuy(fetchTx, atomic, "zzz"), "BAD_PARAM");
   // direct sale: seller address match instead of payScript
-  const direct = listing({ sellerUnlock: null, payScript: null, seller: "1Seller" });
+  const direct = listing({ seller: "1Seller" });
   const directBuy = tx([], [[5000, "00", ["1Seller"]], [100, "00", ["1Fee"]]]);
   await verifyBuy(async () => directBuy, direct, TX2);
   await rejectsCode(verifyBuy(async () => buy, direct, TX2), "BAD_PAYMENT");
@@ -157,6 +207,7 @@ function tokenListing(over = {}) {
   return listing({
     assetKind: "bsv21", title: "100 STARS", priceSats: 1000,
     tokenId: TOKEN_ID, tokenAmount: "100",
+    payScript: P2PKH_A, offer: { version: 3, kind: "bsv21" },
     ...over,
   });
 }

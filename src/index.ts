@@ -191,10 +191,8 @@ export default {
           ...draft, status: "active",
           buyTxid: null, buyerHandle: null, transferTxid: null,
           createdAt: now, updatedAt: now,
-          inputScript: null,
         };
-        const parent = await verifyListParent(fetchTx, listing);
-        listing.inputScript = parent.scriptHex || null;
+        await verifyListParent(fetchTx, listing);
         await store.insert(listing);
         return json({ ok: true, origin: listing.origin });
       }

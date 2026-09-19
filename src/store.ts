@@ -16,7 +16,7 @@ export interface ListingStore {
 
 const COLS = [
   "origin", "asset_kind", "title", "image", "description", "metadata",
-  "price_sats", "seller", "seller_handle", "seller_unlock", "pay_script",
+  "price_sats", "seller", "seller_handle", "offer_json", "seller_unlock", "pay_script",
   "input_script", "token_id", "token_amount", "fee_bps", "fee_address", "status",
   "buy_txid", "buyer_handle", "transfer_txid", "created_at", "updated_at",
 ].join(", ");
@@ -32,6 +32,7 @@ function toListing(r: Record<string, unknown>): Listing {
     priceSats: Number(r.price_sats),
     seller: String(r.seller),
     sellerHandle: (r.seller_handle as string | null) ?? null,
+    offer: r.offer_json ? (JSON.parse(String(r.offer_json)) as unknown) : null,
     sellerUnlock: (r.seller_unlock as string | null) ?? null,
     payScript: (r.pay_script as string | null) ?? null,
     inputScript: (r.input_script as string | null) ?? null,
@@ -84,10 +85,10 @@ export function d1Store(db: {
     },
     insert: async (l) => {
       await db.prepare(
-        `INSERT INTO listings (${COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO listings (${COLS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       ).bind(
         l.origin, l.assetKind, l.title, l.image, l.description, JSON.stringify(l.metadata),
-        l.priceSats, l.seller, l.sellerHandle, l.sellerUnlock, l.payScript,
+        l.priceSats, l.seller, l.sellerHandle, l.offer ? JSON.stringify(l.offer) : null, l.sellerUnlock, l.payScript,
         l.inputScript, l.tokenId, l.tokenAmount, l.feeBps, l.feeAddress, l.status,
         l.buyTxid, l.buyerHandle, l.transferTxid, l.createdAt, l.updatedAt,
       ).run();
