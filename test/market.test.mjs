@@ -301,3 +301,22 @@ test("generated UI matches public/ sources byte-for-byte", async () => {
     assert.equal(UI_ASSETS[`/${f}`].body, fs.readFileSync(path.join(dir, f), "utf8"), `${f} stale — run npm run build:ui`);
   }
 });
+
+test("toChainTx converts WhatsOnChain BSV values to sats", async () => {
+  const { toChainTx } = await import("../src/index.ts");
+  const raw = {
+    vin: [{ txid: "AB".repeat(32), vout: 1 }],
+    vout: [
+      { n: 0, value: 1e-8, scriptPubKey: { hex: P2PKH_A, addresses: ["1Seller"] } },
+      { n: 1, value: 4.1e-7, scriptPubKey: { hex: "00", addresses: [] } },
+      { n: 2, value: 0.05, scriptPubKey: { hex: P2PKH_B, addresses: ["1Fee"] } },
+    ],
+  };
+  const tx = toChainTx(raw, "t");
+  assert.deepEqual(tx.vout.map((o) => o.value), [1, 41, 5000000]);
+  assert.equal(tx.vin[0].txid, "ab".repeat(32));
+  // real listing flow: a 1-sat carrier must pass the ordinal check
+  await verifyListParent(async () => tx, listing({ origin: `${TX}.0` }));
+  assert.equal(toChainTx(null, "t"), null);
+  assert.equal(toChainTx({ vin: [], vout: "nope" }, "t"), null);
+});

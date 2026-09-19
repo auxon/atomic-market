@@ -67,7 +67,12 @@ function err(code: string, message: string): Response {
   return json({ error: { code, message } }, status);
 }
 
-function toChainTx(raw: unknown, txid: string): ChainTx | null {
+/**
+ * WhatsOnChain `/tx/{txid}` reports vout values in BSV (a 1-sat output is
+ * 1e-8), while every check in this worker speaks satoshis. Convert once,
+ * here. Exported for tests.
+ */
+export function toChainTx(raw: unknown, txid: string): ChainTx | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as { vin?: unknown; vout?: unknown };
   if (!Array.isArray(r.vin) || !Array.isArray(r.vout)) return null;
@@ -81,7 +86,7 @@ function toChainTx(raw: unknown, txid: string): ChainTx | null {
       const v = o as { value?: unknown; n?: unknown; scriptPubKey?: unknown };
       const sp = (v.scriptPubKey ?? {}) as { hex?: unknown; addresses?: unknown };
       return {
-        value: Number(v.value),
+        value: Math.round(Number(v.value) * 1e8), // BSV -> sats
         n: Number(v.n),
         scriptPubKey: {
           hex: String(sp.hex ?? ""),
