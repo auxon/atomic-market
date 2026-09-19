@@ -50,6 +50,22 @@ function setStatus(el, text, cls = "status") {
   el.textContent = text;
 }
 
+/**
+ * Post a settlement, retrying only TX_UNKNOWN: indexers lag fresh
+ * broadcasts by up to a couple of minutes and that is exactly when the
+ * market cannot verify yet. Anything else is final.
+ */
+async function postRetry(path, body, attempts = 3) {
+  for (let i = 1; ; i++) {
+    try {
+      return await marketFetch(path, body);
+    } catch (e) {
+      if (e.code !== "TX_UNKNOWN" || i >= attempts) throw e;
+      await new Promise((r) => setTimeout(r, 5000 * i));
+    }
+  }
+}
+
 function bridgeError(e) {
   const msg = e instanceof Error ? e.message : String(e);
   if (msg.includes("POLICY_DENY")) return "needs approval first — run: bsv allow market.entangleit.com (then retry)";
@@ -220,16 +236,33 @@ async function buyListing(listing, row, status) {
           `market buy ${fresh.origin}`,
         );
       }
-      await marketFetch("/v1/market/buy", {
-        origin: fresh.origin,
-        buyTxid: res.txid,
-        ...(state.address ? { buyerHandle: short(state.address, 24) } : {}),
-      });
-      if (offer) {
-        // The swap tx itself moved the asset: settle immediately.
-        await marketFetch("/v1/market/settle", { origin: fresh.origin, transferTxid: res.txid }).catch(() => {});
+      let posted = false;
+      try {
+        await postRetry("/v1/market/buy", {
+          origin: fresh.origin,
+          buyTxid: res.txid,
+          ...(state.address ? { buyerHandle: short(state.address, 24) } : {}),
+        });
+        posted = true;
+      } catch {
+        /* broadcast succeeded; sync can catch up later */
       }
-      setStatus(status, `bought · ${String(res.txid).slice(0, 12)}…${offer ? " (atomic)" : ""}`, "status ok");
+      if (offer && posted) {
+        // The swap tx itself moved the asset: settle immediately.
+        try {
+          await postRetry("/v1/market/settle", { origin: fresh.origin, transferTxid: res.txid });
+        } catch {
+          /* settle is bookkeeping; the swap already moved the asset */
+        }
+      }
+      const short12 = String(res.txid).slice(0, 12);
+      setStatus(
+        status,
+        posted
+          ? `bought · ${short12}…${offer ? " (atomic)" : ""}`
+          : `bought · ${short12}… — market sync pending (bsv market sync ${fresh.origin} ${res.txid})`,
+        posted ? "status ok" : "status",
+      );
       setTimeout(loadListings, 1500);
     } catch (e) {
       setStatus(status, bridgeError(e), "status warn");
