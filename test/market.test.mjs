@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { feeSats, isP2PKH, parseOutpoint, validateListing } from "../src/validate.ts";
 import { transferJsonHex, verifyBuy, verifyListParent, verifySettle } from "../src/verify.ts";
+import { routePath } from "../src/index.ts";
 import { d1Store, memoryStore } from "../src/store.ts";
 
 const P2PKH_A = `76a914${"11".repeat(20)}88ac`;
@@ -247,4 +248,14 @@ test("verifyListParent returns the carrier script for atomic offers", async () =
   const parent = await verifyListParent(async (id) => byId[id] ?? null, listing());
   assert.equal(parent.scriptHex, script);
   assert.equal(parent.value, 1);
+});
+
+test("routePath strips the /atomic-market base path", () => {
+  assert.equal(routePath("/v1/market"), "/v1/market");
+  assert.equal(routePath("/health"), "/health");
+  assert.equal(routePath("/atomic-market"), "/");
+  assert.equal(routePath("/atomic-market/"), "/");
+  assert.equal(routePath("/atomic-market/v1/market"), "/v1/market");
+  assert.equal(routePath("/atomic-market/v1/market/listing/abc.0"), "/v1/market/listing/abc.0");
+  assert.equal(routePath("/atomic-marketx/v1"), "/atomic-marketx/v1");
 });

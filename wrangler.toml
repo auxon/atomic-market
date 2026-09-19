@@ -1,6 +1,12 @@
 name = "atomic-market"
 main = "src/index.ts"
 compatibility_date = "2026-09-01"
+workers_dev = true
+
+# Custom domain path (workers.dev keeps serving /v1/* at the root).
+routes = [
+  { pattern = "entangleit.com/atomic-market/*", zone_name = "entangleit.com" },
+]
 
 [[d1_databases]]
 binding = "DB"

@@ -26,6 +26,18 @@ function json(data: unknown, status = 200): Response {
   return Response.json(data, { status, headers: CORS });
 }
 
+/**
+ * Base-path strip: the worker serves /v1/* on workers.dev and
+ * /atomic-market/v1/* on entangleit.com (Worker route). Pure — tested.
+ */
+export function routePath(pathname: string): string {
+  const prefix = "/atomic-market";
+  if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
+    return pathname.slice(prefix.length) || "/";
+  }
+  return pathname;
+}
+
 function err(code: string, message: string): Response {
   const status = code === "NOT_FOUND" ? 404
     : code === "ALREADY_SOLD" || code === "ALREADY_LISTED" ? 409
@@ -65,6 +77,7 @@ export default {
     if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
     const url = new URL(req.url);
     const store = d1Store(env.DB);
+    const path = routePath(url.pathname);
     const base = (env.WOC_BASE ?? "https://api.whatsonchain.com/v1/bsv/main").replace(/\/$/, "");
     const fetchTx = async (txid: string): Promise<ChainTx | null> => {
       try {
@@ -78,26 +91,26 @@ export default {
 
     try {
       // GET /v1/market[?kind=ordinal|bsv21]
-      if (req.method === "GET" && url.pathname === "/v1/market") {
+      if (req.method === "GET" && path === "/v1/market") {
         const kind = url.searchParams.get("kind");
         const listings = await store.listActive(kind === "ordinal" || kind === "bsv21" ? kind : undefined);
         return json({ listings });
       }
       // GET /v1/market/recent[?limit=]
-      if (req.method === "GET" && url.pathname === "/v1/market/recent") {
+      if (req.method === "GET" && path === "/v1/market/recent") {
         const listings = await store.listRecent(Number(url.searchParams.get("limit")) || 50);
         return json({ listings });
       }
       // GET /v1/market/listing/:origin
       {
-        const m = /^\/v1\/market\/listing\/(.+)$/.exec(url.pathname);
+        const m = /^\/v1\/market\/listing\/(.+)$/.exec(path);
         if (req.method === "GET" && m) {
           const listing = await store.get(decodeURIComponent(m[1]!));
           if (!listing) return err("NOT_FOUND", "listing not found");
           return json({ listing });
         }
       }
-      if (req.method === "POST" && url.pathname === "/v1/market/list") {
+      if (req.method === "POST" && path === "/v1/market/list") {
         const draft = validateListing(await req.json());
         const now = Date.now();
         const existing = await store.get(draft.origin);
@@ -115,7 +128,7 @@ export default {
         await store.insert(listing);
         return json({ ok: true, origin: listing.origin });
       }
-      if (req.method === "POST" && url.pathname === "/v1/market/buy") {
+      if (req.method === "POST" && path === "/v1/market/buy") {
         const body = (await req.json()) as { origin?: unknown; buyTxid?: unknown; buyerHandle?: unknown };
         if (typeof body.origin !== "string" || !body.origin) return err("BAD_PARAM", "origin required");
         if (typeof body.buyTxid !== "string" || !body.buyTxid) return err("BAD_PARAM", "buyTxid required");
@@ -129,7 +142,7 @@ export default {
         });
         return json({ ok: true });
       }
-      if (req.method === "POST" && url.pathname === "/v1/market/settle") {
+      if (req.method === "POST" && path === "/v1/market/settle") {
         const body = (await req.json()) as { origin?: unknown; transferTxid?: unknown };
         if (typeof body.origin !== "string" || !body.origin) return err("BAD_PARAM", "origin required");
         if (typeof body.transferTxid !== "string" || !body.transferTxid) return err("BAD_PARAM", "transferTxid required");
@@ -142,7 +155,7 @@ export default {
         await store.setStatus(body.origin, "sold", { transferTxid: body.transferTxid.toLowerCase() });
         return json({ ok: true });
       }
-      if (req.method === "POST" && url.pathname === "/v1/market/cancel") {
+      if (req.method === "POST" && path === "/v1/market/cancel") {
         const body = (await req.json()) as { origin?: unknown; seller?: unknown };
         if (typeof body.origin !== "string" || !body.origin) return err("BAD_PARAM", "origin required");
         const listing = await store.get(body.origin);
@@ -154,7 +167,7 @@ export default {
         await store.setStatus(body.origin, "cancelled", {});
         return json({ ok: true });
       }
-      if (req.method === "GET" && url.pathname === "/health") return json({ ok: true });
+      if (req.method === "GET" && path === "/health") return json({ ok: true });
       return err("NOT_FOUND", "unknown route");
     } catch (e) {
       const code = (e as { code?: unknown }).code;
