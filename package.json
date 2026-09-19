@@ -1,0 +1,11 @@
+{
+  "name": "atomic-market",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Generic atomic-swap order book: ordinals today, BSV21 tomorrow. No custody, no escrow — the chain settles, the worker only matches and verifies.",
+  "scripts": {
+    "test": "node --test 'test/**/*.test.mjs'",
+    "deploy": "npx wrangler d1 execute atomic-market --file=./schema.sql && npx wrangler deploy"
+  }
+}

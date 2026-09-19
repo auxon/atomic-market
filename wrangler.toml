@@ -1,0 +1,9 @@
+name = "atomic-market"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "atomic-market"
+database_id = "19b91f85-4782-4fe0-8cf6-17bac2b480e2"
+migrations_dir = "."
